@@ -15,10 +15,12 @@ products such as Enterprise Vault.
 ### Usage
 
 Syntax:
+```
 Remove-MessageClassItems.ps1 [-Identity] <String> [-MessageClass] <String> [-Server <String>] [-Impersonation] [-Credentials <PSCredential>] [-DeleteMode <String>] [-ScanAllFolders] [-Before <DateTime>] [-MailboxOnly] [-ArchiveOnly] [-IncludeFolders <String[]>] [-ExcludeFolders <String[]>] [-NoProgressBar] [-Report] [-WhatIf] [-Confirm] [<CommonParameters>]
+```
 
 Examples:
-``
+```
 .\Remove-MessageClassItems.ps1 -Identity user1 -Impersonation -Verbose -DeleteMode MoveToDeletedItems -MessageClass IPM.Note.EnterpriseVault.Shortcut
 ```
 Process mailbox of user1, moving "IPM.Note.EnterpriseVault.Shortcut" message class items to the
