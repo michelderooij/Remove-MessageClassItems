@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 1.81, December 6th, 2017
+    Version 1.82, September 26th, 2019
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -68,6 +68,7 @@
             Added MessageClass size limits check
             Added EWS Managed API DLL version reporting (Verbose)
     1.81    Added X-AnchorMailbox for impersonation requests
+    1.82    Added LogFile Parameter to log the actons on a file
 
 
     .PARAMETER Identity
@@ -159,6 +160,9 @@
     .PARAMETER Report
     Reports individual items detected as duplicate. Can be used together with WhatIf to perform pre-analysis.
 
+    .PARAMETER LogFile
+    Fullname of the file to use for logging
+
     .EXAMPLE
     .\Remove-MessageClassItems.ps1 -Identity user1 -Impersonation -Verbose -DeleteMode MoveToDeletedItems -MessageClass IPM.Note.EnterpriseVault.Shortcut
 
@@ -189,6 +193,8 @@
 
     Uses a CSV file to fix specified mailboxes (containing Identity column), removing "IPM.ixos-archive" items permanently, using impersonation.
 
+    .EXAMPLE
+    .\Remove-MessageClassItems.ps1 -Identity $UserIdentity -Credentials $cred -Impersonation -Server $server -DeleteMode SoftDelete -MessageClass IPM.Note.EnterpriseVault.* -ScanAllFolders –MailboxOnly -Confirm:$false -LogFile $LogFile -Verbose -NoProgressBar
 #>
 
 [cmdletbinding(
@@ -231,7 +237,9 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = "All")]
     [switch]$NoProgressBar,
     [parameter( Mandatory = $false, ParameterSetName = "All")]
-    [switch]$Report
+    [switch]$Report,
+    [parameter( Mandatory = $false, ParameterSetName = "All")]
+    [string]$LogFile
 )
 
 process {
@@ -263,8 +271,7 @@ process {
         $address = [regex]::Match([string]$Identity, ".*@.*\..*", "IgnoreCase")
         if ( $address.Success ) {
             return $address.value.ToString()
-        }
-        Else {
+        } Else {
             # Use local AD to look up e-mail address using $Identity as CN or SamAccountName
             $ADSearch = New-Object DirectoryServices.DirectorySearcher( [ADSI]"")
             $ADSearch.Filter = "(|(cn=$Identity)(samAccountName=$Identity)(mail=$Identity))"
@@ -272,8 +279,7 @@ process {
             If ( $Result) {
                 $objUser = $Result.getDirectoryEntry()
                 return $objUser.mail.toString()
-            }
-            else {
+            } else {
                 return $null
             }
         }
@@ -283,8 +289,7 @@ process {
         $EWSDLL = "Microsoft.Exchange.WebServices.dll"
         If ( Test-Path "$pwd\$EWSDLL") {
             $EWSDLLPath = "$pwd"
-        }
-        Else {
+        } Else {
             $EWSDLLPath = (($(Get-ItemProperty -ErrorAction SilentlyContinue -Path Registry::$(Get-ChildItem -ErrorAction SilentlyContinue -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Exchange\Web Services'|Sort-Object Name -Descending| Select-Object -First 1 -ExpandProperty Name)).'Install Directory'))
             if (!( Test-Path "$EWSDLLPath\$EWSDLL")) {
                 Write-Error "This script requires EWS Managed API 1.2 installed or the DLL in the current folder."
@@ -299,15 +304,13 @@ process {
             If (!( Get-Module Microsoft.Exchange.WebServices)) {
                 Import-Module "$EWSDLLPATH\$EWSDLL"
             }
-        }
-        catch {
+        } catch {
             #<= EX2010
             [void][Reflection.Assembly]::LoadFile( "$EWSDLLPath\$EWSDLL")
         }
         try {
             $Temp = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2007_SP1
-        }
-        catch {
+        } catch {
             Write-Error "Problem loading $EWSDLL"
             Exit $ERR_EWSLOADING
         }
@@ -354,7 +357,8 @@ process {
     Function Construct-FolderFilter {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string[]]$Folders
+            [string[]]$Folders,
+            [string]$emailAddress
         )
         If ( $Folders) {
             $FolderFilterSet = @()
@@ -363,9 +367,8 @@ process {
                 $Parts = $Folder -match '^(?<root>\\)?(?<keywords>.*?)?(?<sub>\\\*)?$'
                 If ( !$Parts) {
                     Write-Error ('Invalid regular expression matching against {0}' -f $Folder)
-                }
-                Else {
-                    $Keywords = Search-ReplaceWellKnownFolderNames $EwsService ($Matches.keywords)
+                } Else {
+                    $Keywords = Search-ReplaceWellKnownFolderNames $EwsService ($Matches.keywords) $emailAddress
                     $EscKeywords = [Regex]::Escape( $Keywords) -replace '\\\*', '.*'
                     $Pattern = iif -eval $Matches.Root -tv '^\\' -fv '^\\(.*\\)*'
                     $Pattern += iif -eval $EscKeywords -tv $EscKeywords -fv ''
@@ -379,8 +382,7 @@ process {
                     Write-Debug ($Obj -join ',')
                 }
             }
-        }
-        Else {
+        } Else {
             $FolderFilterSet = $null
         }
         return $FolderFilterSet
@@ -389,13 +391,14 @@ process {
     Function Search-ReplaceWellKnownFolderNames {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string]$criteria = ''
+            [string]$criteria = '',
+            [string]$emailAddress
         )
         $AllowedWKF = 'Inbox', 'Calendar', 'Contacts', 'Notes', 'SentItems', 'Tasks', 'JunkEmail', 'DeletedItems'
         # Construct regexp to see if allowed WKF is part of criteria string
         ForEach ( $ThisWKF in $AllowedWKF) {
             If ( $criteria -match '#{0}#') {
-                $criteria = $criteria -replace ('#{0}#' -f $ThisWKF), (myEWSBind-WellKnownFolder $EwsService $ThisWKF).DisplayName
+                $criteria = $criteria -replace ('#{0}#' -f $ThisWKF), (myEWSBind-WellKnownFolder $EwsService $ThisWKF $emailAddress).DisplayName
             }
         }
         return $criteria
@@ -409,8 +412,7 @@ process {
                 $script:SleepTimer = [int]([math]::Max( [int]($script:SleepTimer / $script:SleepAdjustmentFactor), $script:SleepTimerMin))
                 Write-Warning ('Previous EWS operation successful, adjusted sleep timer to {0}ms' -f $script:SleepTimer)
             }
-        }
-        Else {
+        } Else {
             $script:SleepTimer = [int]([math]::Min( ($script:SleepTimer * $script:SleepAdjustmentFactor) + 100, $script:SleepTimerMax))
             If ( $script:SleepTimer -eq 0) {
                 $script:SleepTimer = 5000
@@ -433,17 +435,14 @@ process {
             Try {
                 $res = $EwsService.FindFolders( $FolderId, $FolderSearchCollection, $FolderView)
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Error performing operation FindFolders with Search options in {0}. Error: {1}' -f $FolderId.FolderName, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -462,17 +461,14 @@ process {
             Try {
                 $res = $EwsService.FindFolders( $FolderId, $FolderView)
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Error performing operation FindFolders without Search options in {0}. Error: {1}' -f $FolderId.FolderName, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -491,17 +487,14 @@ process {
             Try {
                 $res = $Folder.FindItems( $ItemSearchFilterCollection, $ItemView)
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Error performing operation FindItems with Search options in {0}. Error: {1}' -f $Folder.DisplayName, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -519,17 +512,14 @@ process {
             Try {
                 $res = $Folder.FindItems( $ItemView)
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Error performing operation FindItems without Search options in {0}. Error {1}' -f $Folder.DisplayName, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -551,22 +541,18 @@ process {
             Try {
                 If ( @([Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013, [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1) -contains $EwsService.RequestedServerVersion) {
                     $res = $EwsService.DeleteItems( $ItemIds, $DeleteMode, $SendCancellationsMode, $AffectedTaskOccurrences, $SuppressReadReceipt)
-                }
-                Else {
+                } Else {
                     $res = $EwsService.DeleteItems( $ItemIds, $DeleteMode, $SendCancellationsMode, $AffectedTaskOccurrences)
                 }
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Error performing operation RemoveItems with {0}. Error: {1}' -f $RemoveItems, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -576,25 +562,24 @@ process {
     Function myEWSBind-WellKnownFolder {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string]$WellKnownFolderName
+            [string]$WellKnownFolderName,
+            [string]$emailAddress
         )
         $OpSuccess = $false
         $critErr = $false
         Do {
             Try {
-                $res = [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName)
+                $explicitFolder = New-Object -TypeName Microsoft.Exchange.WebServices.Data.FolderId( [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName, $emailAddress)  
+                $res = [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, $explicitFolder)
                 $OpSuccess = $true
-            }
-            catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
+            } catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess = $false
                 Write-Warning 'EWS operation failed, server busy - will retry later'
-            }
-            catch {
+            } catch {
                 $OpSuccess = $false
                 $critErr = $true
                 Write-Warning ('Cannot bind to {0} - skipping. Error: {1}' -f $WellKnownFolderName, $Error[0])
-            }
-            finally {
+            } finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
@@ -625,8 +610,7 @@ process {
         Do {
             If ( $FolderSearchCollection.Count -ge 1) {
                 $FolderSearchResults = myEWSFind-Folders $EwsService $Folder.Id $FolderSearchCollection $FolderView
-            }
-            Else {
+            } Else {
                 $FolderSearchResults = myEWSFind-FoldersNoSearch $EwsService $Folder.Id $FolderView
             }
             ForEach ( $Folder in $FolderSearchResults) {
@@ -642,8 +626,7 @@ process {
                             $Subs = $Filter.IncludeSubs
                         }
                     }
-                }
-                Else {
+                } Else {
                     # If no includeFolders specified, include all (unless excluded later on)
                     $Add = $true
                     $Subs = $true
@@ -685,7 +668,8 @@ process {
             [string]$Identity,
             $Folder,
             $IncludeFilter,
-            $ExcludeFilter
+            $ExcludeFilter,
+            $emailAddress
         )
 
         $ProcessingOK = $True
@@ -694,7 +678,7 @@ process {
         $FoldersFound = 0
         $FoldersProcessed = 0
         $TimeProcessingStart = Get-Date
-        $DeletedItemsFolder = myEWSBind-WellKnownFolder $EwsService 'DeletedItems'
+        $DeletedItemsFolder = myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
 
         # Build list of folders to process
         Write-Verbose (iif $ScanAllFolders -fv 'Collecting folders containing e-mail items to process' -tv 'Collecting folders to process')
@@ -707,13 +691,18 @@ process {
             If (!$NoProgressBar) {
                 Write-Progress -Id 1 -Activity "Processing $Identity" -Status "Processed folder $FoldersProcessed of $FoldersFound" -PercentComplete ( $FoldersProcessed / $FoldersFound * 100)
             }
+            if ($LogFile) {
+                "Activity: Processing $Identity Status: Processed folder $FoldersProcessed of $FoldersFound  PercentComplete: " + ( $FoldersProcessed / $FoldersFound * 100) | Out-File $LogFile -Encoding utf8 -Append 
+            }
             If ( ! ( $DeleteMode -eq 'MoveToDeletedItems' -and $SubFolder.Id -eq $DeletedItemsFolder.Id)) {
                 If ( $Report.IsPresent) {
                     Write-Host ('Processing folder {0}' -f $SubFolder.Name)
                 }
-                Else {
-                    Write-Verbose ('Processing folder {0}' -f $SubFolder.Name)
-                }
+                If ( $LogFile.IsPresent) {
+                    ('Processing folder {0}' -f $SubFolder.Name) | Out-File $LogFile -Encoding utf8 -Append 
+                } 
+                Write-Verbose ('Processing folder {0}' -f $SubFolder.Name)
+                
                 $ItemView = New-Object Microsoft.Exchange.WebServices.Data.ItemView( $script:MaxItemBatchSize, 0, [Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
                 $ItemView.Traversal = [Microsoft.Exchange.WebServices.Data.ItemTraversal]::Shallow
                 $ItemView.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet(
@@ -726,13 +715,11 @@ process {
                 If ($MessageClass -match '^\*(?<substring>.*?)\*$') {
                     $ItemSearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring( [Microsoft.Exchange.WebServices.Data.ItemSchema]::ItemClass,
                         $matches['substring'], [Microsoft.Exchange.WebServices.Data.ContainmentMode]::Substring, [Microsoft.Exchange.WebServices.Data.ComparisonMode]::IgnoreCase)
-                }
-                Else {
+                } Else {
                     If ($MessageClass -match '^(?<prefix>.*?)\*$') {
                         $ItemSearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring( [Microsoft.Exchange.WebServices.Data.ItemSchema]::ItemClass,
                             $matches['prefix'], [Microsoft.Exchange.WebServices.Data.ContainmentMode]::Prefixed, [Microsoft.Exchange.WebServices.Data.ComparisonMode]::IgnoreCase)
-                    }
-                    Else {
+                    } Else {
                         $ItemSearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+IsEqualTo( [Microsoft.Exchange.WebServices.Data.ItemSchema]::ItemClass, $MessageClass)
                     }
                 }
@@ -745,8 +732,7 @@ process {
                 $ProcessList = [System.Collections.ArrayList]@()
                 If ( $psversiontable.psversion.major -lt 3) {
                     $ItemIds = [activator]::createinstance(([type]'System.Collections.Generic.List`1').makegenerictype([Microsoft.Exchange.WebServices.Data.ItemId]))
-                }
-                Else {
+                } Else {
                     $type = ("System.Collections.Generic.List" + '`' + "1") -as 'Type'
                     $type = $type.MakeGenericType([Microsoft.Exchange.WebServices.Data.ItemId] -as 'Type')
                     $ItemIds = [Activator]::CreateInstance($type)
@@ -757,21 +743,26 @@ process {
                     If (!$NoProgressBar) {
                         Write-Progress -Id 2 -Activity ('Processing folder {0}' -f $SubFolder.Name) -Status ('Found {0} matching items' -f $ProcessList.Count)
                     }
+                    if ($LogFile) {
+                        "Activity: Processing folder " + $SubFolder.Name + " Status: Found " + $ProcessList.Count + " matching items" | Out-File $LogFile -Encoding utf8 -Append 
+                    }
                     If ( $ItemSearchResults.Items.Count -gt 0) {
                         ForEach ( $Item in $ItemSearchResults.Items) {
                             If ( $Report.IsPresent) {
                                 Write-Host ('Item: {0} of {1} ({2})' -f $Item.Subject, $Item.DateTimeReceived, $Item.ItemClass)
                             }
+                            If ($LogFile) {
+                                ('Item: {0} of {1} ({2})' -f $Item.Subject, $Item.DateTimeReceived, $Item.ItemClass) | Out-File $LogFile -Encoding utf8 -Append 
+                            }
+                            Write-Verbose ('Item: {0} of {1} ({2})' -f $Item.Subject, $Item.DateTimeReceived, $Item.ItemClass)
                             $ProcessList.Add( $Item.Id)
                         }
-                    }
-                    Else {
+                    } Else {
                         Write-Debug "No matching items found"
                     }
                     $ItemView.Offset += $ItemSearchResults.Items.Count
                 } While ( $ItemSearchResults.MoreAvailable)
-            }
-            Else {
+            } Else {
                 Write-Debug "Skipping DeletedItems folder"
             }
             $TotalMatch += $ItemSearchResults.TotalCount
@@ -784,20 +775,21 @@ process {
                         If (!$NoProgressBar) {
                             Write-Progress -Id 2 -Activity "Processing folder $($SubFolder.DisplayName)" -Status "Items processed $ItemsChanged - remaining $ItemsRemaining" -PercentComplete ( $ItemsRemoved / $ProcessList.Count * 100)
                         }
+                        if ($LogFile) {
+                            "-Activity: Processing folder " + $SubFolder.DisplayName + " Status: Items processed $ItemsChanged - remaining $ItemsRemaining PercentComplete: " + ( $ItemsRemoved / $ProcessList.Count * 100) | Out-File $LogFile -Encoding utf8 -Append 
+                        }
                         Try {
                             $ItemObj = [Microsoft.Exchange.WebServices.Data.Item]::Bind( $EwsService, $ItemID)
                             $ItemObj.ItemClass = $ReplaceClass
                             $ItemObj.Update( [Microsoft.Exchange.WebServices.Data.ConflictResolutionMode]::AutoResolve)
-                        }
-                        Catch {
+                        } Catch {
                             Write-Error ('Problem modifying item: {0}' -f $error[0])
                             $ProcessingOK = $False
                         }
                         $ItemsChanged++
                         $ItemsRemaining--
                     }
-                }
-                Else {
+                } Else {
                     Write-Verbose ('Removing {0} items from {1}' -f $ProcessList.Count, $SubFolder.Name)
 
                     $SendCancellationsMode = [Microsoft.Exchange.WebServices.Data.SendCancellationsMode]::SendToNone
@@ -816,6 +808,9 @@ process {
                             If (!$NoProgressBar) {
                                 Write-Progress -Id 2 -Activity "Processing folder $($SubFolder.DisplayName)" -Status "Items processed $ItemsRemoved - remaining $ItemsRemaining" -PercentComplete ( $ItemsRemoved / $ProcessList.Count * 100)
                             }
+                            if ($LogFile) {
+                                "Activity: Processing folder " + $SubFolder.DisplayName + " Status: Items processed $ItemsRemoved - remaining $ItemsRemaining PercentComplete: " + ($ItemsRemoved / $ProcessList.Count * 100) | Out-File $LogFile -Encoding utf8 -Append 
+                            }
                             $res = myEWSRemove-Items $EwsService $ItemIds $DeleteMode $SendCancellationsMode $AffectedTaskOccurrences $SuppressReadReceipt
                             $ItemIds.Clear()
                         }
@@ -831,14 +826,19 @@ process {
                 If (!$NoProgressBar) {
                     Write-Progress -Id 2 -Activity "Processing folder $($SubFolder.DisplayName)" -Status 'Finished processing.' -Completed
                 }
-            }
-            Else {
+                if ($LogFile) {
+                    "Activity: Processing folder " + $SubFolder.DisplayName + " Status: Finished processing." | Out-File $LogFile -Encoding utf8 -Append 
+                }
+            } Else {
                 # No matches
             }
             $FoldersProcessed++
         } # ForEach SubFolder
         If (!$NoProgressBar) {
             Write-Progress -Id 1 -Activity "Processing $Identity" -Status "Finished processing." -Completed
+        }
+        if ($LogFile) {
+            "Activity: Processing $Identity Status: Finished processing." | Out-File $LogFile -Encoding utf8 -Append 
         }
         If ( $ProcessingOK) {
             $TimeProcessingDiff = (Get-Date) - $TimeProcessingStart
@@ -858,8 +858,7 @@ process {
 
     If ( $MailboxOnly) {
         $ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2007_SP1
-    }
-    Else {
+    } Else {
         $ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP2
     }
 
@@ -868,13 +867,11 @@ process {
         try {
             Write-Verbose ('Using credentials {0}' -f $Credentials.UserName)
             $EwsService.Credentials = New-Object System.Net.NetworkCredential( $Credentials.UserName, [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR( $Credentials.Password )))
-        }
-        catch {
+        } catch {
             Write-Error ('Invalid credentials provided, error: {0}' -f $error[0])
             Exit $ERR_INVALIDCREDENTIALS
         }
-    }
-    Else {
+    } Else {
         $EwsService.UseDefaultCredentials = $true
     }
 
@@ -885,8 +882,13 @@ process {
             Write-Error ('Specified mailbox {0} not found' -f $CurrentIdentity)
             Exit $ERR_MAILBOXNOTFOUND
         }
-
-        Write-Host ('Processing mailbox {0} ({1})' -f $CurrentIdentity, $EmailAddress)
+        if ($LogFile) {
+            "Processing mailbox $CurrentIdentity $EmailAddress"  | Out-File $LogFile -Encoding utf8 -Append 
+        }
+        #Write-Host ('Processing mailbox {0} ({1})' -f $CurrentIdentity, $EmailAddress)
+        #Write-Output ('Processing mailbox {0} ({1})' -f $CurrentIdentity, $EmailAddress)
+        Write-Verbose ('Processing mailbox {0} ({1})' -f $CurrentIdentity, $EmailAddress)
+        
 
         If ( $Impersonation) {
             Write-Verbose ('Using {0} for impersonation' -f $EmailAddress)
@@ -898,15 +900,13 @@ process {
             $EwsUrl = ('https://{0}/EWS/Exchange.asmx' -f $Server)
             Write-Verbose ('Using Exchange Web Services URL {0}' -f $EwsUrl)
             $EwsService.Url = $EwsUrl
-        }
-        Else {
+        } Else {
             Write-Verbose ('Looking up EWS URL using Autodiscover for {0}' -f $EmailAddress)
             try {
                 # Set script to terminate on all errors (autodiscover failure isn't) to make try/catch work
                 $ErrorActionPreference = 'Stop'
                 $EwsService.autodiscoverUrl( $EmailAddress, {$true})
-            }
-            catch {
+            } catch {
                 Write-Error ('Autodiscover failed, error: {0}' -f $_.Exception.Message)
                 Exit $ERR_AUTODISCOVERFAILED
             }
@@ -916,8 +916,7 @@ process {
 
         If ( $ReplaceClass) {
             Write-Verbose ('Changing messages of class {0} to {1}' -f $MessageClass, $ReplaceClass)
-        }
-        Else {
+        } Else {
             Write-Verbose ('DeleteMode is {0}' -f $DeleteMode)
             Write-Verbose ('Removing messages of class {0}' -f $MessageClass)
         }
@@ -932,16 +931,15 @@ process {
 
         If ( -not $ArchiveOnly.IsPresent) {
             try {
-                $RootFolder = myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot'
+                $RootFolder = myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot' $emailAddress
                 If ( $RootFolder) {
                     Write-Verbose ('Processing primary mailbox {0}' -f $Identity)
-                    If (! ( Process-Mailbox -Identity $Identity -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter)) {
+                    If (! ( Process-Mailbox -Identity $Identity -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress)) {
                         Write-Error ('Problem processing primary mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
                         Exit $ERR_PROCESSINGMAILBOX
                     }
                 }
-            }
-            catch {
+            } catch {
                 Write-Error ('Cannot access mailbox information store, error: {0}' -f $Error[0])
                 Exit $ERR_CANTACCESSMAILBOXSTORE
             }
@@ -949,16 +947,15 @@ process {
 
         If ( -not $MailboxOnly.IsPresent) {
             try {
-                $ArchiveRootFolder = myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot'
+                $ArchiveRootFolder = myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot' $emailAddress
                 If ( $ArchiveRootFolder) {
                     Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
-                    If (! ( Process-Mailbox -Identity $Identity -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter)) {
+                    If (! ( Process-Mailbox -Identity $Identity -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress)) {
                         Write-Error ('Problem processing archive mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
                         Exit $ERR_PROCESSINGARCHIVE
                     }
                 }
-            }
-            catch {
+            } catch {
                 Write-Debug 'No archive configured or cannot access archive'
             }
         }
