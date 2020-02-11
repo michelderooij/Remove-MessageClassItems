@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 1.81, December 6th, 2017
+    Version 1.83, February 9th, 2020
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -68,6 +68,8 @@
             Added MessageClass size limits check
             Added EWS Managed API DLL version reporting (Verbose)
     1.81    Added X-AnchorMailbox for impersonation requests
+    1.82    Fixed issue with processing delegate mailboxes using Full Access permissions
+    1.83    Fixed bug in folder selection process
 
 
     .PARAMETER Identity
@@ -354,7 +356,8 @@ process {
     Function Construct-FolderFilter {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string[]]$Folders
+            [string[]]$Folders,
+            [string]$emailAddress
         )
         If ( $Folders) {
             $FolderFilterSet = @()
@@ -365,7 +368,7 @@ process {
                     Write-Error ('Invalid regular expression matching against {0}' -f $Folder)
                 }
                 Else {
-                    $Keywords = Search-ReplaceWellKnownFolderNames $EwsService ($Matches.keywords)
+                    $Keywords = Search-ReplaceWellKnownFolderNames $EwsService ($Matches.keywords) $emailAddress
                     $EscKeywords = [Regex]::Escape( $Keywords) -replace '\\\*', '.*'
                     $Pattern = iif -eval $Matches.Root -tv '^\\' -fv '^\\(.*\\)*'
                     $Pattern += iif -eval $EscKeywords -tv $EscKeywords -fv ''
@@ -389,13 +392,14 @@ process {
     Function Search-ReplaceWellKnownFolderNames {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string]$criteria = ''
+            [string]$criteria = '',
+            [string]$emailAddress
         )
         $AllowedWKF = 'Inbox', 'Calendar', 'Contacts', 'Notes', 'SentItems', 'Tasks', 'JunkEmail', 'DeletedItems'
         # Construct regexp to see if allowed WKF is part of criteria string
         ForEach ( $ThisWKF in $AllowedWKF) {
             If ( $criteria -match '#{0}#') {
-                $criteria = $criteria -replace ('#{0}#' -f $ThisWKF), (myEWSBind-WellKnownFolder $EwsService $ThisWKF).DisplayName
+                $criteria = $criteria -replace ('#{0}#' -f $ThisWKF), (myEWSBind-WellKnownFolder $EwsService $ThisWKF $emailAddress).DisplayName
             }
         }
         return $criteria
@@ -576,13 +580,15 @@ process {
     Function myEWSBind-WellKnownFolder {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
-            [string]$WellKnownFolderName
+            [string]$WellKnownFolderName,
+            [string]$emailAddress
         )
         $OpSuccess = $false
         $critErr = $false
         Do {
             Try {
-                $res = [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName)
+                $explicitFolder= New-Object -TypeName Microsoft.Exchange.WebServices.Data.FolderId( [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName, $emailAddress)  
+                $res = [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, $explicitFolder)
                 $OpSuccess = $true
             }
             catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
@@ -629,8 +635,8 @@ process {
             Else {
                 $FolderSearchResults = myEWSFind-FoldersNoSearch $EwsService $Folder.Id $FolderView
             }
-            ForEach ( $Folder in $FolderSearchResults) {
-                $FolderPath = '{0}\{1}' -f $CurrentPath, $Folder.DisplayName
+            ForEach ( $FolderItem in $FolderSearchResults) {
+                $FolderPath = '{0}\{1}' -f $CurrentPath, $FolderItem.DisplayName
                 If ( $IncludeFilter) {
                     $Add = $false
                     # Defaults to true, unless include does not specifically include subfolders
@@ -663,13 +669,13 @@ process {
 
                     $Obj = New-Object -TypeName PSObject -Property @{
                         'Name'   = $FolderPath;
-                        'Folder' = $Folder
+                        'Folder' = $FolderItem
                     }
                     $FoldersToProcess.Add( $Obj) | Out-Null
                 }
                 If ( $Subs) {
                     # Could be that specific folder is to be excluded, but subfolders needs evaluation, or specific folder without subfolders excluded
-                    $SubFolders = Get-SubFolders -Folder $Folder -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -PriorityFilter $PriorityFilter -ScanAllFolders $ScanAllFolders
+                    $SubFolders = Get-SubFolders -Folder $FolderItem -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -PriorityFilter $PriorityFilter -ScanAllFolders $ScanAllFolders
                     ForEach ( $AddFolder in $Subfolders) {
                         $FoldersToProcess.Add( $AddFolder)  | Out-Null
                     }
@@ -685,7 +691,8 @@ process {
             [string]$Identity,
             $Folder,
             $IncludeFilter,
-            $ExcludeFilter
+            $ExcludeFilter,
+            $emailAddress
         )
 
         $ProcessingOK = $True
@@ -694,7 +701,7 @@ process {
         $FoldersFound = 0
         $FoldersProcessed = 0
         $TimeProcessingStart = Get-Date
-        $DeletedItemsFolder = myEWSBind-WellKnownFolder $EwsService 'DeletedItems'
+        $DeletedItemsFolder = myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
 
         # Build list of folders to process
         Write-Verbose (iif $ScanAllFolders -fv 'Collecting folders containing e-mail items to process' -tv 'Collecting folders to process')
@@ -932,10 +939,10 @@ process {
 
         If ( -not $ArchiveOnly.IsPresent) {
             try {
-                $RootFolder = myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot'
+                $RootFolder = myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot' $emailAddress
                 If ( $RootFolder) {
                     Write-Verbose ('Processing primary mailbox {0}' -f $Identity)
-                    If (! ( Process-Mailbox -Identity $Identity -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter)) {
+                    If (! ( Process-Mailbox -Identity $Identity -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress)) {
                         Write-Error ('Problem processing primary mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
                         Exit $ERR_PROCESSINGMAILBOX
                     }
@@ -949,10 +956,10 @@ process {
 
         If ( -not $MailboxOnly.IsPresent) {
             try {
-                $ArchiveRootFolder = myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot'
+                $ArchiveRootFolder = myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot' $emailAddress
                 If ( $ArchiveRootFolder) {
                     Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
-                    If (! ( Process-Mailbox -Identity $Identity -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter)) {
+                    If (! ( Process-Mailbox -Identity $Identity -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress)) {
                         Write-Error ('Problem processing archive mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
                         Exit $ERR_PROCESSINGARCHIVE
                     }
