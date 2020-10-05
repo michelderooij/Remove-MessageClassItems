@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 1.83, February 9th, 2020
+    Version 1.84, October 6th, 2020
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -23,6 +23,10 @@
 
     .NOTES
     Microsoft Exchange Web Services (EWS) Managed API 1.2 or up is required.
+    Recommended EWS.WebServices.Managed.Api (see https://eightwone.com/2020/10/05/ews-webservices-managed-api)
+
+    Search order for Microsoft.Exchange.WebServices.dll: 
+    Script Folder, EWS.WebServices.Managed.Api (package), EWS Managed API (install)
 
     Revision History
     --------------------------------------------------------------------------------
@@ -70,6 +74,7 @@
     1.81    Added X-AnchorMailbox for impersonation requests
     1.82    Fixed issue with processing delegate mailboxes using Full Access permissions
     1.83    Fixed bug in folder selection process
+    1.84    Added code to leverage installed package EWS.WebServices.Managed.Api 
 
 
     .PARAMETER Identity
@@ -282,16 +287,24 @@ process {
     }
 
     Function Load-EWSManagedAPIDLL {
-        $EWSDLL = "Microsoft.Exchange.WebServices.dll"
+        $EWSDLL = 'Microsoft.Exchange.WebServices.dll'
         If ( Test-Path "$pwd\$EWSDLL") {
             $EWSDLLPath = "$pwd"
         }
         Else {
-            $EWSDLLPath = (($(Get-ItemProperty -ErrorAction SilentlyContinue -Path Registry::$(Get-ChildItem -ErrorAction SilentlyContinue -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Exchange\Web Services'|Sort-Object Name -Descending| Select-Object -First 1 -ExpandProperty Name)).'Install Directory'))
-            if (!( Test-Path "$EWSDLLPath\$EWSDLL")) {
-                Write-Error "This script requires EWS Managed API 1.2 installed or the DLL in the current folder."
-                Write-Error "You can download and install EWS Managed API from http://www.microsoft.com/download/details.aspx?id=42951"
-                Exit $ERR_EWSDLLNOTFOUND
+
+            If( Get-Command -Name Get-Package -ErrorAction SilentlyContinue) {
+                If( Get-Package -Name Exchange.WebServices.Managed.Api -ErrorAction SilentlyContinue) {
+                    EWSDLLPath= (Get-ChildItem -ErrorAction SilentlyContinue -Path (Split-Path -Parent (get-Package Exchange.WebServices.Managed.Api).Source) -Filter $EWSDLL -Recurse | Sort -Descending -Property LastWriteTime | Select -First 1).DirectoryName
+                }    
+            }
+            If($null -eq $EWSDLLPath) {
+                $EWSDLLPath = (($(Get-ItemProperty -ErrorAction SilentlyContinue -Path Registry::$(Get-ChildItem -ErrorAction SilentlyContinue -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Exchange\Web Services'|Sort-Object Name -Descending| Select-Object -First 1 -ExpandProperty Name)).'Install Directory'))
+                if (!( Test-Path "$EWSDLLPath\$EWSDLL")) {
+                    Write-Error "This script requires EWS Managed API 1.2 or later to be installed, or the Microsoft.Exchange.WebServices.DLL in the current folder."
+                    Write-Error "You can download and install EWS Managed API from http://go.microsoft.com/fwlink/?LinkId=255472"
+                    Exit $ERR_EWSDLLNOTFOUND
+                }
             }
         }
 
