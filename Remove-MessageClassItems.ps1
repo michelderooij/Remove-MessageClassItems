@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.01, June 24th, 2021
+    Version 2.02, September 24th, 2021
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -84,6 +84,7 @@
             Determine DeletedItems once per mailbox, not for every folder to process
             Replaced ScanAllFolders with Type
     2.01    Fixed loading of module when using installed NuGet packages
+    2.02    Changed PropertySet constructors to prevent possible initialization issues
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -880,10 +881,9 @@ begin {
         $FoldersToProcess= [System.Collections.ArrayList]@()
         $FolderView= New-Object Microsoft.Exchange.WebServices.Data.FolderView( $MaxFolderBatchSize)
         $FolderView.Traversal= [Microsoft.Exchange.WebServices.Data.FolderTraversal]::Shallow
-        $FolderView.PropertySet= New-Object Microsoft.Exchange.WebServices.Data.PropertySet(
-            [Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly,
-            [Microsoft.Exchange.WebServices.Data.FolderSchema]::DisplayName,
-            [Microsoft.Exchange.WebServices.Data.FolderSchema]::FolderClass)
+        $FolderView.PropertySet= New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly)
+        $FolderView.PropertySet.Add( [Microsoft.Exchange.WebServices.Data.FolderSchema]::DisplayName)
+        $FolderView.PropertySet.Add( [Microsoft.Exchange.WebServices.Data.FolderSchema]::FolderClass)
         $FolderSearchCollection= New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection( [Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
         If ( $Type -ne 'All') {
             $FolderSearchClass= (@{Mail= 'IPF.Note'; Calendar= 'IPF.Appointment'; Contacts= 'IPF.Contact'; Tasks= 'IPF.Task'; Notes= 'IPF.StickyNotes'})[$Type]
@@ -985,11 +985,10 @@ begin {
                 }
                 $ItemView= New-Object Microsoft.Exchange.WebServices.Data.ItemView( $script:MaxItemBatchSize, 0, [Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
                 $ItemView.Traversal= [Microsoft.Exchange.WebServices.Data.ItemTraversal]::Shallow
-                $ItemView.PropertySet= New-Object Microsoft.Exchange.WebServices.Data.PropertySet(
-                    [Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly,
-                    [Microsoft.Exchange.WebServices.Data.ItemSchema]::DateTimeReceived,
-                    [Microsoft.Exchange.WebServices.Data.ItemSchema]::Subject,
-                    [Microsoft.Exchange.WebServices.Data.ItemSchema]::ItemClass)
+                $ItemView.PropertySet= New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly)
+                $ItemView.PropertySet.Add( [Microsoft.Exchange.WebServices.Data.ItemSchema]::DateTimeReceived)
+                $ItemView.PropertySet.Add( [Microsoft.Exchange.WebServices.Data.ItemSchema]::Subject)
+                $ItemView.PropertySet.Add( [Microsoft.Exchange.WebServices.Data.ItemSchema]::ItemClass)
 
                 $ItemSearchFilterCollection= New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
                 If ($MessageClass -match '^\*(?<substring>.*?)\*$') {
