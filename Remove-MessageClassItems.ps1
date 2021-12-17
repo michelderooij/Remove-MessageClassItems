@@ -85,7 +85,7 @@
             Replaced ScanAllFolders with Type
     2.01    Fixed loading of module when using installed NuGet packages
     2.02    Changed PropertySet constructors to prevent possible initialization issues
-    2.10    Added DefaultAuth for usage on-premises (using current security context)
+    2.10    Added UseDefaultCredentials for usage on-premises (using current security context)
     2.11    Fixed issue with reporting EWS Service URL used
 
     .PARAMETER Identity
@@ -174,6 +174,9 @@
 
     .PARAMETER ClientId
     Specifies the identity of the application configured in Azure Active Directory.
+
+    .PARAMETER UseDefaultCredentials
+    Instruct script to use current security context, for example, for usage against Exchange on-premises.
 
     .PARAMETER Credentials
     Specify credentials to use with Basic Authentication. Credentials can be set using $Credentials= Get-Credential
@@ -470,7 +473,7 @@ param(
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthArchiveOnly')] 
-    [Switch]$DefaultAuth,
+    [Switch]$UseDefaultCredentials,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecret')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
@@ -1183,7 +1186,7 @@ write-host ($PSCommandSet)
     }
     $EwsService= [Microsoft.Exchange.WebServices.Data.ExchangeService]::new( $ExchangeVersion)
 
-    If( $Credentials -or $DefaultAuth) {
+    If( $Credentials -or $UseDefaultCredentials) {
         If( $Credentials) {
             try {
                 Write-Verbose ('Using credentials {0}' -f $Credentials.UserName)
@@ -1195,7 +1198,8 @@ write-host ($PSCommandSet)
             }
         }
         Else {
-            Write-Verbose ('DefaultAuth specified, using current security context')
+            Write-Verbose ('Using Default Credentials')
+            $EwsService.UseDefaultCredentials = $true
         }
     }
     Else {
