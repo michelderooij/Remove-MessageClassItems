@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.10, December 17th, 2021
+    Version 2.11, December 17th, 2021
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -86,6 +86,7 @@
     2.01    Fixed loading of module when using installed NuGet packages
     2.02    Changed PropertySet constructors to prevent possible initialization issues
     2.10    Added DefaultAuth for usage on-premises (using current security context)
+    2.11    Fixed issue with reporting EWS Service URL used
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -1308,7 +1309,7 @@ process {
                 Exit $ERR_AUTODISCOVERFAILED
             }
             $ErrorActionPreference= 'Continue'
-            Write-Verbose 'Using EWS endpoint {0}' -f $EwsService.Url
+            Write-Verbose ('Using EWS endpoint {0}' -f $EwsService.Url)
         } 
 
         # Construct search filters
