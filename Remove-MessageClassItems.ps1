@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.11, December 17th, 2021
+    Version 2.12, May 4th, 2022
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -87,6 +87,8 @@
     2.02    Changed PropertySet constructors to prevent possible initialization issues
     2.10    Added UseDefaultCredentials for usage on-premises (using current security context)
     2.11    Fixed issue with reporting EWS Service URL used
+    2.12    Changed class to check proper loading of Microsoft.Identity.Client module
+
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -1176,7 +1178,7 @@ write-host ($PSCommandSet)
     }
 
     Import-ModuleDLL -Name 'Microsoft.Exchange.WebServices' -FileName 'Microsoft.Exchange.WebServices.dll' -Package 'Exchange.WebServices.Managed.Api' -validateObjName 'Microsoft.Exchange.WebServices.Data.ExchangeVersion'
-    Import-ModuleDLL -Name 'Microsoft.Identity.Client' -FileName 'Microsoft.Identity.Client.dll' -Package 'Microsoft.Identity.Client' -validateObjName 'Microsoft.Identity.Client.TokenCache'
+    Import-ModuleDLL -Name 'Microsoft.Identity.Client' -FileName 'Microsoft.Identity.Client.dll' -Package 'Microsoft.Identity.Client' -validateObjName 'Microsoft.Identity.Client.CacheOptions'
 
     If ( $MailboxOnly) {
         $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2007_SP1
