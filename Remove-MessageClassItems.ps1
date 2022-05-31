@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.12, May 4th, 2022
+    Version 2.20, May 31st, 2022
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -88,7 +88,10 @@
     2.10    Added UseDefaultCredentials for usage on-premises (using current security context)
     2.11    Fixed issue with reporting EWS Service URL used
     2.12    Changed class to check proper loading of Microsoft.Identity.Client module
-
+    2.20    Added Public Folder support
+            Refactoring to accomodate PF support
+            Requires PowerShell 3 and up (removed <PF3 compatibility code)
+            Removed Exchange Server 2007 support
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -117,6 +120,10 @@
 
     .PARAMETER Before
     Allows you to remove items of a certain age by filtering on their DateTimeReceived attribute. Default is all items.
+
+    .PARAMETER PublicFolders
+    Switch to indicate that (modern) Public Folders need to be processed instead
+    of mailboxes or archives.
 
     .PARAMETER MailboxOnly
     Only process primary mailbox of specified users. You als need to use this parameter when
@@ -236,7 +243,7 @@
     Permanently remove items of type IPM.ixos-archive from mailboxes identified by CSV file in Office365 bypassing AutoDiscover. 
     OAuth authentication is performed against indicated tenant <TenantID> using registered App <ClientID> and App secret entered.
 #>
-
+#Requires -Version 3
 [cmdletbinding(
     DefaultParameterSetName = 'DefaultAuth',
     SupportsShouldProcess= $true,
@@ -258,6 +265,11 @@ param(
     [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
     [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Position= 0, Mandatory= $true, ValueFromPipelineByPropertyName= $true, ParameterSetName= 'BasicAuthPublicFolders')] 
     [alias('Mailbox')]
     [string]$Identity,
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuth')] 
@@ -275,6 +287,11 @@ param(
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthPublicFolders')] 
     [ValidateLength(1, 255)]
     [string]$MessageClass,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
@@ -292,6 +309,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [ValidateLength(1, 255)]
     [string]$ReplaceClass,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
@@ -309,6 +331,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [ValidateSet( 'Mail', 'Calendar', 'Contacts', 'Tasks', 'Notes', 'All')]
     [string]$Type= 'All',
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
@@ -326,6 +353,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [string]$Server,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -342,6 +374,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [switch]$Impersonation,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -358,6 +395,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [ValidateSet( 'HardDelete', 'SoftDelete', 'MoveToDeletedItems')]
     [string]$DeleteMode= 'SoftDelete',
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
@@ -375,6 +417,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [switch]$ScanAllFolders,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -391,6 +438,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [datetime]$Before,
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbMailboxOnly')] 
@@ -398,6 +450,12 @@ param(
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthMailboxOnly')] 
     [switch]$MailboxOnly,
+    [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthPublicFolders')] 
+    [switch]$PublicFolders,
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
@@ -419,6 +477,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [string[]]$IncludeFolders,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -435,6 +498,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [string[]]$ExcludeFolders,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -467,31 +535,42 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [switch]$Report,
     [parameter( Mandatory= $true, ParameterSetName= 'BasicAuth')] 
     [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'BasicAuthPublicFolders')] 
     [System.Management.Automation.PsCredential]$Credentials,
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'DefaultAuthPublicFolders')] 
     [Switch]$UseDefaultCredentials,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecret')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
     [System.Security.SecureString]$Secret,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumb')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
     [String]$CertificateThumbprint,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFile')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileMailboxOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
     [ValidateScript({ Test-Path -Path $_ -PathType Leaf})]
     [String]$CertificateFile,
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFile')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileMailboxOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
     [System.Security.SecureString]$CertificatePassword,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumb')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFile')] 
@@ -502,6 +581,9 @@ param(
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
     [string]$TenantId,
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumb')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFile')] 
@@ -512,6 +594,9 @@ param(
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $true, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
     [string]$ClientId,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
@@ -528,6 +613,11 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [switch]$TrustAll
 )
 #Requires -Version 3.0
@@ -560,15 +650,14 @@ write-host ($PSCommandSet)
     $ERR_INVALIDCREDENTIALS= 1007
     $ERR_PROBLEMIMPORTINGCERT= 1008
     $ERR_CERTNOTFOUND= 1009
-
-    ### HELPER FUNCTIONS ###
+    $ERR_PROCESSINGPUBLICFOLDERS= 1010
+    $ERR_CANTACCESSPUBLICFOLDERS= 1011
 
     Function Import-ModuleDLL {
         param(
             [string]$Name,
             [string]$FileName,
-            [string]$Package,
-            [string]$ValidateObjName
+            [string]$Package
         )
 
         $AbsoluteFileName= Join-Path -Path $PSScriptRoot -ChildPath $FileName
@@ -604,15 +693,9 @@ write-host ($PSCommandSet)
                 If( $ModLoaded) {
                     Write-Verbose ('Module {0} v{1} loaded' -f $ModLoaded.Name, $ModLoaded.Version)
                 }
-                If( $validateObjName) {
-                    # Try initializing test object to validate proper loading of module
-                    Try {
-                        $null= New-Object -TypeName $validateObjName
-                    }
-                    Catch {
-                        Write-Error ('Problem initializing test-object from module {0}: {1}' -f $Name, $_.Exception.Message)
-                        Exit $ERR_DLLLOADING
-                    }
+                If(!( Get-Module -Name $Name -ErrorAction SilentlyContinue)) {
+                    Write-Error ('Problem loading module {0}: {1}' -f $Name, $_.Exception.Message)
+                    Exit $ERR_DLLLOADING
                 }
             }
         }
@@ -701,7 +784,7 @@ write-host ($PSCommandSet)
                         'IncludeSubs'= [bool]$Matches.Sub
                         'OrigFilter' = [string]$Folder
                     }
-                    $null= $FolderFilterSet.Add( $Obj)
+                    $FolderFilterSet.Add( $Obj) | Out-Null
                     Write-Debug ($Obj -join ',')
                 }
             }
@@ -935,7 +1018,8 @@ write-host ($PSCommandSet)
             $Folder,
             $CurrentPath,
             $IncludeFilter,
-            $ExcludeFilter
+            $ExcludeFilter,
+            $EwsService
         )
         $FoldersToProcess= [System.Collections.ArrayList]@()
         $FolderView= New-Object Microsoft.Exchange.WebServices.Data.FolderView( $MaxFolderBatchSize)
@@ -992,12 +1076,12 @@ write-host ($PSCommandSet)
                         'Name'    = $FolderPath;
                         'Folder'  = $FolderItem
                     }
-                    $null= $FoldersToProcess.Add( $Obj)
+                    $FoldersToProcess.Add( $Obj) | Out-Null
                 }
                 If ( $Subs) {
                     # Could be that specific folder is to be excluded, but subfolders needs evaluation
-                    ForEach ( $AddFolder in (Get-SubFolders -Folder $FolderItem -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter)) {
-                        $null= $FoldersToProcess.Add( $AddFolder)
+                    ForEach ( $AddFolder in (Get-SubFolders -Folder $FolderItem -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService)) {
+                        $FoldersToProcess.Add( $AddFolder) | Out-Null
                     }
                 }
             }
@@ -1011,10 +1095,12 @@ write-host ($PSCommandSet)
         Param(
             [string]$Identity,
             $Folder,
+            $Desc,
             $IncludeFilter,
             $ExcludeFilter,
+            $EwsService,
             $emailAddress,
-            $DeletedItemsFolder
+            $DeletedItemsFolder= $null
         )
 
         $ProcessingOK= $True
@@ -1025,15 +1111,15 @@ write-host ($PSCommandSet)
         $TimeProcessingStart= Get-Date
 
         # Build list of folders to process
-        Write-Verbose (iif $ScanAllFolders -fv 'Collecting folders containing e-mail items to process' -tv 'Collecting folders to process')
-        $FoldersToProcess= Get-SubFolders -Folder $Folder -CurrentPath '' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -ScanAllFolders $ScanAllFolders
+        Write-Verbose (iif $ScanAllFolders -fv 'Collecting folders containing items to process' -tv 'Collecting folders to process')
+        $FoldersToProcess= Get-SubFolders -Folder $Folder -CurrentPath '' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -ScanAllFolders $ScanAllFolders -EwsService $EwsService
 
         $FoldersFound= $FoldersToProcess.Count
         Write-Verbose ('Found {0} folders matching folder search criteria' -f $FoldersFound)
 
         ForEach ( $SubFolder in $FoldersToProcess) {
             If (!$NoProgressBar) {
-                Write-Progress -Id 1 -Activity ('Processing {0}' -f $Identity) -Status ('Processed folder {0} of {1}' -f $FoldersProcessed, $FoldersFound) -PercentComplete ( $FoldersProcessed / $FoldersFound * 100)
+                Write-Progress -Id 1 -Activity ('Processing {0} ({1})' -f $Identity, $Desc) -Status ('Processed folder {0} of {1}' -f $FoldersProcessed, $FoldersFound) -PercentComplete ( $FoldersProcessed / $FoldersFound * 100)
             }
             If ( ! ( $DeleteMode -eq 'MoveToDeletedItems' -and $SubFolder.Id -eq $DeletedItemsFolder.Id)) {
                 If ( $Report.IsPresent) {
@@ -1070,14 +1156,9 @@ write-host ($PSCommandSet)
                 }
 
                 $ProcessList= [System.Collections.ArrayList]@()
-                If ( $psversiontable.psversion.major -lt 3) {
-                    $ItemIds= [activator]::createinstance(([type]'System.Collections.Generic.List`1').makegenerictype([Microsoft.Exchange.WebServices.Data.ItemId]))
-                }
-                Else {
-                    $type= ("System.Collections.Generic.List" + '`' + "1") -as 'Type'
-                    $type= $type.MakeGenericType([Microsoft.Exchange.WebServices.Data.ItemId] -as 'Type')
-                    $ItemIds= [Activator]::CreateInstance($type)
-                }
+                $type= ("System.Collections.Generic.List" + '`' + "1") -as 'Type'
+                $type= $type.MakeGenericType([Microsoft.Exchange.WebServices.Data.ItemId] -as 'Type')
+                $ItemIds= [Activator]::CreateInstance($type)
 
                 Do {
                     $ItemSearchResults= MyEWSFind-Items $SubFolder.Folder $ItemSearchFilterCollection $ItemView
@@ -1144,7 +1225,7 @@ write-host ($PSCommandSet)
                             If (!$NoProgressBar) {
                                 Write-Progress -Id 2 -Activity ('Processing folder {0}' -f $SubFolder.DisplayName) -Status ('Items processed {0} - remaining {1}' -f $ItemsRemoved, $ItemsRemaining) -PercentComplete ( $ItemsRemoved / $ProcessList.Count * 100)
                             }
-                            $null= myEWSRemove-Items $EwsService $ItemIds $DeleteMode $SendCancellationsMode $AffectedTaskOccurrences $SuppressReadReceipt
+                            myEWSRemove-Items $EwsService $ItemIds $DeleteMode $SendCancellationsMode $AffectedTaskOccurrences $SuppressReadReceipt | Out-Null
                             $ItemIds.Clear()
                         }
                     }
@@ -1177,14 +1258,14 @@ write-host ($PSCommandSet)
         Return $ProcessingOK
     }
 
-    Import-ModuleDLL -Name 'Microsoft.Exchange.WebServices' -FileName 'Microsoft.Exchange.WebServices.dll' -Package 'Exchange.WebServices.Managed.Api' -validateObjName 'Microsoft.Exchange.WebServices.Data.ExchangeVersion'
-    Import-ModuleDLL -Name 'Microsoft.Identity.Client' -FileName 'Microsoft.Identity.Client.dll' -Package 'Microsoft.Identity.Client' -validateObjName 'Microsoft.Identity.Client.CacheOptions'
+    Import-ModuleDLL -Name 'Microsoft.Exchange.WebServices' -FileName 'Microsoft.Exchange.WebServices.dll' -Package 'Exchange.WebServices.Managed.Api'
+    Import-ModuleDLL -Name 'Microsoft.Identity.Client' -FileName 'Microsoft.Identity.Client.dll' -Package 'Microsoft.Identity.Client'
 
     If ( $MailboxOnly) {
-        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2007_SP1
+        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP1
     }
     Else {
-        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP2
+        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
     }
     $EwsService= [Microsoft.Exchange.WebServices.Data.ExchangeService]::new( $ExchangeVersion)
 
@@ -1278,7 +1359,6 @@ write-host ($PSCommandSet)
 
 }
 
-
 process {
 
     ForEach ( $CurrentIdentity in $Identity) {
@@ -1289,7 +1369,12 @@ process {
             Exit $ERR_MAILBOXNOTFOUND
         }
 
-        Write-Host ('Processing mailbox {0} ({1})' -f $EmailAddress, $CurrentIdentity)
+        If( $PublicFolders) {
+            Write-Host ('Processing Public Folders as {0} ({1})' -f $EmailAddress, $CurrentIdentity)
+        }
+        Else {
+            Write-Host ('Processing mailbox {0} ({1})' -f $EmailAddress, $CurrentIdentity)
+        }
 
         If( $Impersonation) {
             Write-Verbose ('Using {0} for impersonation' -f $EmailAddress)
@@ -1323,41 +1408,61 @@ process {
         $IncludeFilter= Construct-FolderFilter $EwsService $IncludeFolders $EmailAddress
         $ExcludeFilter= Construct-FolderFilter $EwsService $ExcludeFolders $EmailAddress
 
-        If ( -not $ArchiveOnly.IsPresent) {
+        If ( $PublicFolders.IsPresent) {
             try {
-                $RootFolder= myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot' $emailAddress
-                If ( $RootFolder) {
-                    Write-Verbose ('Processing primary mailbox {0}' -f $emailAddress)
-                    $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
-                    If (! ( Process-Mailbox -Identity $emailAddress -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
-                        Write-Error ('Problem processing primary mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
-                        Exit $ERR_PROCESSINGMAILBOX
+                $RootFolder= myEWSBind-WellKnownFolder $EwsService 'PublicFoldersRoot' 
+                If ($null -ne $RootFolder) {
+                    Write-Verbose ('Processing Public Folders')
+                    If (! ( Process-Mailbox -Folder $RootFolder -Desc 'Public Folders' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService -emailAddress $emailAddress)) {
+                        Write-Error ('Problem processing Public Folders as {0} ({1})' -f $EmailAddress, $CurrentIdentity)
+                        Exit $ERR_PROCESSINGPUBLICFOLDERS
                     }
                 }
             }
             catch {
-                Write-Error ('Cannot access mailbox information store for {0}: {1}' -f $EmailAddress, $_.Exception.Message)
-                Exit $ERR_CANTACCESSMAILBOXSTORE
+                Write-Error ('Cannot access public folders as {0}: {1}' -f $EmailAddress, $_.Exception.Message)
+                Exit $ERR_CANTACCESSPUBLICFOLDERS
             }
+            Write-Verbose ('Processing Public Folders finished')
         }
+        Else {
 
-        If ( -not $MailboxOnly.IsPresent) {
-            try {
-                $ArchiveRootFolder= myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot' $emailAddress
-                If ( $ArchiveRootFolder) {
-                    Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
-                    $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
-                    If (! ( Process-Mailbox -Identity $emailAddress -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
-                        Write-Error ('Problem processing archive mailbox of {0} ({1})' -f $emailAddress, $CurrentIdentity)
-                        Exit $ERR_PROCESSINGARCHIVE
+            If ( -not $ArchiveOnly.IsPresent) {
+                try {
+                    $RootFolder= myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot' $emailAddress
+                    If ( $RootFolder) {
+                        Write-Verbose ('Processing primary mailbox {0}' -f $emailAddress)
+                        $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
+                        If (! ( Process-Mailbox -Identity $emailAddress -Desc 'Mailbox'  -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
+                            Write-Error ('Problem processing primary mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
+                            Exit $ERR_PROCESSINGMAILBOX
+                        }
                     }
                 }
+                catch {
+                    Write-Error ('Cannot access mailbox information store for {0}: {1}' -f $EmailAddress, $_.Exception.Message)
+                    Exit $ERR_CANTACCESSMAILBOXSTORE
+                }
             }
-            catch {
-                Write-Debug 'No archive configured or cannot access archive'
+
+            If ( -not $MailboxOnly.IsPresent) {
+                try {
+                    $ArchiveRootFolder= myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot' $emailAddress
+                    If ( $ArchiveRootFolder) {
+                        Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
+                        $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
+                        If (! ( Process-Mailbox -Identity $emailAddress -Desc 'Archive' -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
+                            Write-Error ('Problem processing archive mailbox of {0} ({1})' -f $emailAddress, $CurrentIdentity)
+                            Exit $ERR_PROCESSINGARCHIVE
+                        }
+                    }
+                }
+                catch {
+                    Write-Debug 'No archive configured or cannot access archive'
+                }
             }
+            Write-Verbose ('Processing {0} finished' -f $emailAddress)
         }
-        Write-Verbose ('Processing {0} finished' -f $emailAddress)
     }
 }
 
