@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.20, May 31st, 2022
+    Version 2.22, June 15th, 2022
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -92,6 +92,8 @@
             Refactoring to accomodate PF support
             Requires PowerShell 3 and up (removed <PF3 compatibility code)
             Removed Exchange Server 2007 support
+    2.21    Removed obsolete ScanAllFolders switch
+    2.22    Fixed not retrieving folders properly due PF refactoring
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -402,27 +404,6 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [ValidateSet( 'HardDelete', 'SoftDelete', 'MoveToDeletedItems')]
     [string]$DeleteMode= 'SoftDelete',
-    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthArchiveOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumb')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFile')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecret')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuth')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbMailboxOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileMailboxOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthMailboxOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
-    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
-    [switch]$ScanAllFolders,
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthArchiveOnly')] 
@@ -866,6 +847,7 @@ write-host ($PSCommandSet)
             [Microsoft.Exchange.WebServices.Data.FolderId]$FolderId,
             [Microsoft.Exchange.WebServices.Data.FolderView]$FolderView
         )
+
         $OpSuccess= $false
         $CritErr= $false
         Do {
@@ -1019,8 +1001,10 @@ write-host ($PSCommandSet)
             $CurrentPath,
             $IncludeFilter,
             $ExcludeFilter,
+            $Type,
             $EwsService
         )
+
         $FoldersToProcess= [System.Collections.ArrayList]@()
         $FolderView= New-Object Microsoft.Exchange.WebServices.Data.FolderView( $MaxFolderBatchSize)
         $FolderView.Traversal= [Microsoft.Exchange.WebServices.Data.FolderTraversal]::Shallow
@@ -1080,7 +1064,7 @@ write-host ($PSCommandSet)
                 }
                 If ( $Subs) {
                     # Could be that specific folder is to be excluded, but subfolders needs evaluation
-                    ForEach ( $AddFolder in (Get-SubFolders -Folder $FolderItem -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService)) {
+                    ForEach ( $AddFolder in (Get-SubFolders -Folder $FolderItem -CurrentPath $FolderPath -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -Type $Type -EwsService $EwsService)) {
                         $FoldersToProcess.Add( $AddFolder) | Out-Null
                     }
                 }
@@ -1099,6 +1083,7 @@ write-host ($PSCommandSet)
             $IncludeFilter,
             $ExcludeFilter,
             $EwsService,
+            $Type,
             $emailAddress,
             $DeletedItemsFolder= $null
         )
@@ -1111,15 +1096,15 @@ write-host ($PSCommandSet)
         $TimeProcessingStart= Get-Date
 
         # Build list of folders to process
-        Write-Verbose (iif $ScanAllFolders -fv 'Collecting folders containing items to process' -tv 'Collecting folders to process')
-        $FoldersToProcess= Get-SubFolders -Folder $Folder -CurrentPath '' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -ScanAllFolders $ScanAllFolders -EwsService $EwsService
+        Write-Verbose ('Collecting folders to process')
+        $FoldersToProcess= Get-SubFolders -Folder $Folder -CurrentPath '' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -Type $Type -EwsService $EwsService
 
         $FoldersFound= $FoldersToProcess.Count
         Write-Verbose ('Found {0} folders matching folder search criteria' -f $FoldersFound)
 
         ForEach ( $SubFolder in $FoldersToProcess) {
             If (!$NoProgressBar) {
-                Write-Progress -Id 1 -Activity ('Processing {0} ({1})' -f $Identity, $Desc) -Status ('Processed folder {0} of {1}' -f $FoldersProcessed, $FoldersFound) -PercentComplete ( $FoldersProcessed / $FoldersFound * 100)
+                Write-Progress -Id 1 -Activity ('Processing {0} ({1})' -f $emailaddress, $Desc) -Status ('Processed folder {0} of {1}' -f $FoldersProcessed, $FoldersFound) -PercentComplete ( $FoldersProcessed / $FoldersFound * 100)
             }
             If ( ! ( $DeleteMode -eq 'MoveToDeletedItems' -and $SubFolder.Id -eq $DeletedItemsFolder.Id)) {
                 If ( $Report.IsPresent) {
@@ -1413,7 +1398,7 @@ process {
                 $RootFolder= myEWSBind-WellKnownFolder $EwsService 'PublicFoldersRoot' 
                 If ($null -ne $RootFolder) {
                     Write-Verbose ('Processing Public Folders')
-                    If (! ( Process-Mailbox -Folder $RootFolder -Desc 'Public Folders' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService -emailAddress $emailAddress)) {
+                    If (! ( Process-Mailbox -Folder $RootFolder -Desc 'Public Folders' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService -Type $Type -emailAddress $emailAddress)) {
                         Write-Error ('Problem processing Public Folders as {0} ({1})' -f $EmailAddress, $CurrentIdentity)
                         Exit $ERR_PROCESSINGPUBLICFOLDERS
                     }
@@ -1433,7 +1418,7 @@ process {
                     If ( $RootFolder) {
                         Write-Verbose ('Processing primary mailbox {0}' -f $emailAddress)
                         $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
-                        If (! ( Process-Mailbox -Identity $emailAddress -Desc 'Mailbox'  -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
+                        If (! ( Process-Mailbox -Identity $emailAddress -EwsService $EwsService -Desc 'Mailbox'  -Folder $RootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -Type $Type -DeletedItemsFolder $DeletedItemsFolder)) {
                             Write-Error ('Problem processing primary mailbox of {0} ({1})' -f $CurrentIdentity, $EmailAddress)
                             Exit $ERR_PROCESSINGMAILBOX
                         }
@@ -1451,7 +1436,7 @@ process {
                     If ( $ArchiveRootFolder) {
                         Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
                         $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
-                        If (! ( Process-Mailbox -Identity $emailAddress -Desc 'Archive' -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -DeletedItemsFolder $DeletedItemsFolder)) {
+                        If (! ( Process-Mailbox -Identity $emailAddress -EwsService $EwsService -Desc 'Archive' -Folder $ArchiveRootFolder -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -emailAddress $emailAddress -Type $Type -DeletedItemsFolder $DeletedItemsFolder)) {
                             Write-Error ('Problem processing archive mailbox of {0} ({1})' -f $emailAddress, $CurrentIdentity)
                             Exit $ERR_PROCESSINGARCHIVE
                         }
