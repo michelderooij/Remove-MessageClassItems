@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.22, June 15th, 2022
+    Version 2.3, April 19th, 2023
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -94,6 +94,9 @@
             Removed Exchange Server 2007 support
     2.21    Removed obsolete ScanAllFolders switch
     2.22    Fixed not retrieving folders properly due PF refactoring
+    2.3     Added ExchangeSchema parameter
+            Added NoSCP switch
+            Setting TimeZone when connecting
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -176,6 +179,17 @@
     .PARAMETER Server
     Exchange Client Access Server to use for Exchange Web Services. When ommited, script will attempt to
     use Autodiscover.
+
+   .PARAMETER NoSCP
+    Will instruct to skip SCP lookups in Active Directory when using Autodiscover.
+
+    .PARAMETER ExchangeSchema 
+    Specify Exchange schema to use when connecting to Exchange server or Exchange Online.
+    Options are Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, Exchange2013_SP1, 
+    Exchange2015 or Exchange2016. Default is Exchange2013_SP1, except when you specified the server parameter as 
+    'outlook.office365.com', in which case it will be set to Exchange2016 for Exchange Online compatibility reasons.
+    If you do not specify server, and you get "The property Hashtags is valid only for Exchange Exchange2015 or later versions",
+    you can specify Exchange2015 (or Exchange 2016) as ExchangeSchema.
 
     .PARAMETER TrustAll
     Specifies if all certificates should be accepted, including self-signed certificates.
@@ -361,6 +375,49 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [string]$Server,
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumb')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFile')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecret')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuth')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
+    [switch]$NoSCP,
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumb')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFile')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecret')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuth')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthMailboxOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFileArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthArchiveOnly')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertFilePublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertSecretPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'OAuthCertThumbPublicFolders')] 
+    [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
+    [ValidateSet( 'Exchange2007_SP1', 'Exchange2010', 'Exchange2010_SP1', 'Exchange2010_SP2', 'Exchange2013', 'Exchange2013_SP1', 'Exchange2015', 'Exchange2016' )]
+    [string]$ExchangeSchema='Exchange2013_SP1',
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuth')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthMailboxOnly')] 
     [parameter( Mandatory= $false, ParameterSetName= 'DefaultAuthArchiveOnly')] 
@@ -601,11 +658,7 @@ param(
     [parameter( Mandatory= $false, ParameterSetName= 'BasicAuthPublicFolders')] 
     [switch]$TrustAll
 )
-#Requires -Version 3.0
-
 begin {
-
-write-host ($PSCommandSet)
 
     # Process folders these batches
     $script:MaxFolderBatchSize= 100
@@ -941,7 +994,8 @@ write-host ($PSCommandSet)
         $critErr= $false
         Do {
             Try {
-                If ( @([Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013, [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1) -contains $EwsService.RequestedServerVersion) {
+                # Only supported by Exchange 2013 and up
+                If ( 15 -le $EwsService.ServerInfo.MajorVersion) {
                     $res= $EwsService.DeleteItems( $ItemIds, $DeleteMode, $SendCancellationsMode, $AffectedTaskOccurrences, $SuppressReadReceipt)
                 }
                 Else {
@@ -962,14 +1016,15 @@ write-host ($PSCommandSet)
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
-        Write-Output -NoEnumerate $res
+        $res
     }
 
     Function myEWSBind-WellKnownFolder {
         param(
             [Microsoft.Exchange.WebServices.Data.ExchangeService]$EwsService,
             [string]$WellKnownFolderName,
-            [string]$emailAddress
+            [string]$emailAddress,
+            [switch]$ShowVersion
         )
         $OpSuccess= $false
         $critErr= $false
@@ -977,7 +1032,12 @@ write-host ($PSCommandSet)
             Try {
                 $explicitFolder= New-Object -TypeName Microsoft.Exchange.WebServices.Data.FolderId( [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName, $emailAddress)  
                 $res= [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, $explicitFolder)
+                $res.load()
                 $OpSuccess= $true
+                if( $ShowVersion) {
+                    # Show Exchange build when connecting to a primary/archive/pf mailbox
+                    Write-Verbose ('Detected Exchange Server version {0}.{1}.{2}.{3} ({4}, requested schema {5})' -f $EwsService.ServerInfo.MajorVersion, $EwsService.ServerInfo.MinorVersion, $EwsService.ServerInfo.MajorBuildNumber, $EwsService.ServerInfo.MinorBuildNumber, $EwsService.ServerInfo.VersionString, $ExchangeSchema)
+                }
             }
             catch [Microsoft.Exchange.WebServices.Data.ServerBusyException] {
                 $OpSuccess= $false
@@ -986,13 +1046,14 @@ write-host ($PSCommandSet)
             catch {
                 $OpSuccess= $false
                 $critErr= $true
-                Write-Warning ('Cannot bind to {0}: {1}' -f $WellKnownFolderName, $_.Exception.Message)
+                Write-Warning ('Cannot bind to {0}: {1}' -f $WellKnownFolderName, $Error[0])
             }
             finally {
                 If ( !$critErr) { Tune-SleepTimer $OpSuccess }
             }
         } while ( !$OpSuccess -and !$critErr)
-        Write-Output -NoEnumerate $res
+
+        $res
     }
 
     Function Get-SubFolders {
@@ -1218,7 +1279,7 @@ write-host ($PSCommandSet)
                     If ( $ItemIds.Count -gt 0) {
                         $ItemsRemoved += $ItemIds.Count
                         $ItemsRemaining= 0
-                        $res= myEWSRemove-Items $EwsService $ItemIds $DeleteMode $SendCancellationsMode $AffectedTaskOccurrences $SuppressReadReceipt
+                        myEWSRemove-Items $EwsService $ItemIds $DeleteMode $SendCancellationsMode $AffectedTaskOccurrences $SuppressReadReceipt | Out-Null
                         $ItemIds.Clear()
                     }
                     $TotalRemoved+= $ProcessList.Count
@@ -1246,13 +1307,18 @@ write-host ($PSCommandSet)
     Import-ModuleDLL -Name 'Microsoft.Exchange.WebServices' -FileName 'Microsoft.Exchange.WebServices.dll' -Package 'Exchange.WebServices.Managed.Api'
     Import-ModuleDLL -Name 'Microsoft.Identity.Client' -FileName 'Microsoft.Identity.Client.dll' -Package 'Microsoft.Identity.Client'
 
-    If ( $MailboxOnly) {
-        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP1
+    $TZ= [System.TimeZoneInfo]::Local
+    # Override ExchangeSchema when connecting to EXO
+    If( $Server -eq 'outlook.office365.com') {
+        $ExchangeSchema= 'Exchange2016'
+    } 
+ 
+    Try {
+        $EwsService= [Microsoft.Exchange.WebServices.Data.ExchangeService]::new( [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeSchema, [System.TimeZoneInfo]::FindSystemTimeZoneById( $TZ.Id))
     }
-    Else {
-        $ExchangeVersion= [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
+    Catch {
+        Throw( 'Problem initializing Exchange Web Services using schema {0} and TimeZone {1}' -f $ExchangeSchema, $TZ.Id)
     }
-    $EwsService= [Microsoft.Exchange.WebServices.Data.ExchangeService]::new( $ExchangeVersion)
 
     If( $Credentials -or $UseDefaultCredentials) {
         If( $Credentials) {
@@ -1338,6 +1404,8 @@ write-host ($PSCommandSet)
         Write-Verbose "Removing messages older than $Before"
     }
 
+    $EwsService.EnableScpLookup= if( $NoSCP) { $false } else { $true }
+
     If( $TrustAll) {
         Set-SSLVerification -Disable
     }
@@ -1395,7 +1463,7 @@ process {
 
         If ( $PublicFolders.IsPresent) {
             try {
-                $RootFolder= myEWSBind-WellKnownFolder $EwsService 'PublicFoldersRoot' 
+                $RootFolder= myEWSBind-WellKnownFolder -EwsService $EwsService -WellKnownFolderName 'PublicFoldersRoot' 
                 If ($null -ne $RootFolder) {
                     Write-Verbose ('Processing Public Folders')
                     If (! ( Process-Mailbox -Folder $RootFolder -Desc 'Public Folders' -IncludeFilter $IncludeFilter -ExcludeFilter $ExcludeFilter -EwsService $EwsService -Type $Type -emailAddress $emailAddress)) {
@@ -1414,7 +1482,7 @@ process {
 
             If ( -not $ArchiveOnly.IsPresent) {
                 try {
-                    $RootFolder= myEWSBind-WellKnownFolder $EwsService 'MsgFolderRoot' $emailAddress
+                    $RootFolder= myEWSBind-WellKnownFolder -EwsService $EwsService -WellKnownFolderName 'MsgFolderRoot' -EmailAddress $EmailAddress -ShowVersion
                     If ( $RootFolder) {
                         Write-Verbose ('Processing primary mailbox {0}' -f $emailAddress)
                         $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
@@ -1432,7 +1500,7 @@ process {
 
             If ( -not $MailboxOnly.IsPresent) {
                 try {
-                    $ArchiveRootFolder= myEWSBind-WellKnownFolder $EwsService 'ArchiveMsgFolderRoot' $emailAddress
+                    $ArchiveRootFolder= myEWSBind-WellKnownFolder -EwsService $EwsService -WellKnownFolderName 'ArchiveMsgFolderRoot' -EmailAddress $EmailAddress -ShowVersion
                     If ( $ArchiveRootFolder) {
                         Write-Verbose ('Processing archive mailbox {0}' -f $Identity)
                         $DeletedItemsFolder= myEWSBind-WellKnownFolder $EwsService 'DeletedItems' $emailAddress
