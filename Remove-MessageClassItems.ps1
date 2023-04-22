@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.3, April 19th, 2023
+    Version 2.31, April 22nd, 2023
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -97,6 +97,7 @@
     2.3     Added ExchangeSchema parameter
             Added NoSCP switch
             Setting TimeZone when connecting
+    2.31    Removed obsolete load() call
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -1032,7 +1033,6 @@ begin {
             Try {
                 $explicitFolder= New-Object -TypeName Microsoft.Exchange.WebServices.Data.FolderId( [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$WellKnownFolderName, $emailAddress)  
                 $res= [Microsoft.Exchange.WebServices.Data.Folder]::Bind( $EwsService, $explicitFolder)
-                $res.load()
                 $OpSuccess= $true
                 if( $ShowVersion) {
                     # Show Exchange build when connecting to a primary/archive/pf mailbox
