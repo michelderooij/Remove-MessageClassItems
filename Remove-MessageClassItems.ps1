@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.31, April 22nd, 2023
+    Version 2.32, August 7th, 2023
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -98,6 +98,7 @@
             Added NoSCP switch
             Setting TimeZone when connecting
     2.31    Removed obsolete load() call
+    2.32    Changed OAuth to use dummy creds to prevent 'Credentials are required to make a service request' issue
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -1339,6 +1340,9 @@ begin {
     Else {
         # Use OAuth (and impersonation/X-AnchorMailbox always set)
         $Impersonation= $true
+
+        # Dummy creds to prevent "Credentials are required to make a service request" issue
+        $EwsService.Credentials= [System.Net.NetworkCredential]::new( '', ( ConvertTo-SecureString -String 'dummy' -AsPlainText -Force))
 
         If( $CertificateThumbprint -or $CertificateFile) {
             If( $CertificateFile) {
