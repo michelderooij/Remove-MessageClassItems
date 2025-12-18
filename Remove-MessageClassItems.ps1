@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.32, August 7th, 2023
+    Version 2.33, December 18, 2025
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -99,6 +99,8 @@
             Setting TimeZone when connecting
     2.31    Removed obsolete load() call
     2.32    Changed OAuth to use dummy creds to prevent 'Credentials are required to make a service request' issue
+    2.33    Added unloading of modules to clean up session
+}
 
     .PARAMETER Identity
     Identity of the Mailbox. Can be CN/SAMAccountName (for on-premises) or e-mail format (on-prem & Office 365)
@@ -1527,4 +1529,6 @@ End {
     If( $TrustAll) {
         Set-SSLVerification -Enable
     }
+
+   Remove-Module -Name 'Microsoft.Exchange.WebServices','Microsoft.Identity.Client' -ErrorAction SilentlyContinue
 }
