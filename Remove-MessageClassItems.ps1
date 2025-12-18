@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.33, December 18, 2025
+    Version 2.34, December 18, 2025
 
     .DESCRIPTION
     This script will remove items of a certain class from a mailbox, traversing through
@@ -100,6 +100,8 @@
     2.31    Removed obsolete load() call
     2.32    Changed OAuth to use dummy creds to prevent 'Credentials are required to make a service request' issue
     2.33    Added unloading of modules to clean up session
+    2.34    Added token refresh logic for OAuth authentication
+
 }
 
     .PARAMETER Identity
@@ -848,6 +850,35 @@ begin {
         }
         return $criteria
     }
+
+    Function Invoke-OAuthTokenFresh {
+        # Refresh the OAuth token when it is close to expiring to keep EWS calls authenticated.
+        param(
+            [Microsoft.Exchange.WebServices.Data.ExchangeService]$Service
+        )
+
+        if(-not $App -or -not $Scopes) { return }
+        $expiresSoon= $false
+        if($Token) {
+            $expiresSoon= ($Token.ExpiresOn.UtcDateTime - (Get-Date).ToUniversalTime()) -lt ([TimeSpan]::FromMinutes(5))
+        }
+        else {
+            $expiresSoon= $true
+        }
+        if($expiresSoon) {
+            Write-Verbose ('Refreshing OAuth token; previous expiry {0}' -f ($Token?.ExpiresOn))
+            try {
+                $Response= $App.AcquireTokenForClient( $Scopes).executeAsync()
+                $Token= $Response.Result
+                $Service.Credentials= [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$Token.AccessToken
+                Write-Verbose ('Refreshed OAuth token, new expiry {0}' -f $Token.ExpiresOn)
+            }
+            catch {
+                Write-Warning ('Failed to refresh OAuth token: {0}' -f $_.Exception.Message)
+            }
+        }
+    }
+
     Function Tune-SleepTimer {
         param(
             [bool]$previousResultSuccess= $false
@@ -1296,6 +1327,9 @@ begin {
             }
             $FoldersProcessed++
         } # ForEach SubFolder
+
+        Invoke-OAuthTokenFresh -Service $EwsService
+
         If (!$NoProgressBar) {
             Write-Progress -Id 1 -Activity ('Processing {0}' -f $Identity) -Status 'Finished processing.' -Completed
         }
